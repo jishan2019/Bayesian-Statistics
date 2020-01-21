@@ -1,0 +1,276 @@
+---
+title: 'Lab 14: Robust Linear Regression and MCMC'
+author: "Jishan Luo"
+date: "April 24, 2019"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# MCMC problem
+
+We have learnt a lot about GLM regression. One MCMC problem we may encounter is strong covariance between parameters. This will cause the sampler to move slowly through the parameter space and cause strong autocorrelation for a parameter.
+
+## Fix
+
+One method to fix this is to transform the x and y variables. This may also help for situations where the size of the x and y metrics are large for the computer numerics.
+
+## Standardize the variables
+
+Note that $Z$ has mean 0 and standard deviation 1. 
+
+$$Z=\frac{X-\bar{X}}{S_X}$$
+
+#Task 1
+
+Prove sample mean of $Z$ is 0 and standard deviation is 1.
+
+(a)
+The value of $X$ at the mean is $\bar{X}$,so $X=\bar{X}$.
+
+Insert this value into the formular for $Z$ above and solve, we have 
+$$Z=\frac{\bar{X}-\bar{X}}{S_X}=0$$
+
+(b)
+The value of x one standard derivation from the mean is
+$$x=\bar{X}+S_X$$ or
+$$x=\bar{X}-S_X$$
+Insert this value into the formula for a Z and solve, we have
+$$Z=\frac{(\bar{X}+S_X)-\bar{X}}{S_X}=1$$ or
+$$Z=\frac{(\bar{X}-S_X)-\bar{X}}{S_X}=-1$$
+
+
+# Outliers problem
+
+Outliers can be a problem because they may overly influence an analysis - meaning they might be most responsible for parameter estimates and dominate the rest of the data in terms of their impact on estimates.
+
+One method to lessen the impact of outliers is to use a distribution on Y that has large tails.
+
+## Fix
+
+The t-distribution would be a suitable replacement to the normal.
+
+Read pages 479-487 (Section 17.2)
+
+# Task 2
+
+After reading the above sections do the following:
+
+## Make a Jags model that will analyze the following simulated data 
+
+Do this by NOT using a t distribution and NOT using ceneterd variables. Make sure you diagnose the MCMC
+
+```{r sample}
+x = 42:80
+set.seed(34) # we will all have the same data
+y = 20 + 4*x + rnorm(39,0,20)
+xx = 41
+yy = 20+4*xx + 60
+x = c(xx,x)
+y = c(yy,y)
+plot(y~x, xlim=range(c(0, x)),ylim=range(c(0,y)))
+points(xx,yy,pch=19,cex=3,col="green3")
+```
+
+
+```{r }
+df=data.frame(x,y)
+N=length(y)
+dataList = list(y = y,x = x,N= N)
+
+fileNameRoot="lab14a" # For output file names.
+
+library(rjags)
+#Define the model:
+modelString = "
+model{
+for(i in 1:N)
+{
+y[i] ~ dnorm(mu[i],tau)
+mu[i] <- beta0 + beta1 * x[i]
+
+}
+	beta0 ~ dnorm(0.0, 1.0E-6)
+	beta1 ~ dnorm(0.0, 1.0E-6)
+  sigma ~ dunif(0, 1000)
+	tau <- pow(sigma, -2)
+}
+" # close quote for modelString
+writeLines(modelString, con="TEMPmodel.txt" )
+
+# Initialize the chains based on MLE of data.
+# Option: Use single initial value for all chains:
+#  thetaInit = sum(y)/length(y)
+#  initsList = list( theta=thetaInit )
+
+initsList = list(beta0 = 0, beta1 = 0,sigma=10)
+
+# Run the chains:
+jagsModel = jags.model(file="TEMPmodel.txt" , data=dataList, inits=initsList,
+                       n.chains=3 , n.adapt=500 )
+list.samplers(jagsModel)
+
+update( jagsModel , n.iter=500 )
+codaSamples = coda.samples( jagsModel , variable.names=c("beta0", "beta1","sigma"),
+                            n.iter=33340 )
+save( codaSamples , file=paste0(fileNameRoot,"Mcmc.Rdata") )
+
+result1=summary(codaSamples)
+
+result1
+
+library(ggmcmc)
+s = ggs(codaSamples)
+ggs_density(s)
+
+ggs_crosscorrelation(s)
+
+# diagnose MCMC
+source("DBDA2E-utilities.R")
+parameters = c("beta0", "beta1","sigma") 
+
+fileNameRoot="Lab14a-" # for output filenames
+
+# Display diagnostics of chain:
+
+parameterNames = varnames(codaSamples) # get all parameter names
+for ( parName in parameterNames ) {
+  diagMCMC( codaSamples , parName=parName ,
+            saveName=fileNameRoot , saveType="png" )
+}
+```
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/Lab14a-Diagbeta0.png){ width=60% }
+
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/Lab14a-Diagbeta1.png){ width=60% }
+
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/Lab14a-Diagsigma.png){ width=60% }
+
+
+## Make a jags model that will analyze the data.
+
+See pages 485-486.
+This time center the data and use a t distribution. Make sure you diagnose the MCMC.
+Back transform (transform to original scale) and then:
+
+```{r}
+# Load data file and specity column names of x (predictor) and y (predicted):
+myData = df
+xName = "x" ; yName = "y"
+fileNameRoot="lab14b" # For output file names.
+graphFileType = "png" 
+#------------------------------------------------------------------------------- 
+# Load the relevant model into R's working memory:
+source("Jags-Ymet-Xmet-Mrobust.R")
+#------------------------------------------------------------------------------- 
+# Generate the MCMC chain:
+#startTime = proc.time()
+mcmcCoda = genMCMC( data=myData , xName=xName , yName=yName , 
+                    numSavedSteps=20000 , saveName=fileNameRoot )
+#stopTime = proc.time()
+#duration = stopTime - startTime
+#show(duration)
+#------------------------------------------------------------------------------- 
+# Display diagnostics of chain, for specified parameters:
+parameterNames = varnames(mcmcCoda) # get all parameter names
+for ( parName in parameterNames ) {
+  diagMCMC( codaObject=mcmcCoda , parName=parName , 
+            saveName=fileNameRoot , saveType=graphFileType )
+}
+#------------------------------------------------------------------------------- 
+# Get summary statistics of chain:
+summaryInfo = smryMCMC( mcmcCoda , 
+                        compValBeta1=0.0 , ropeBeta1=c(-0.5,0.5) ,
+                        saveName=fileNameRoot )
+show(summaryInfo)
+# Display posterior information:
+plotMCMC( mcmcCoda , data=myData , xName=xName , yName=yName , 
+          compValBeta1=0.0 , ropeBeta1=c(-0.5,0.5) ,
+          pairsPlot=TRUE , showCurve=FALSE ,
+          saveName=fileNameRoot , saveType=graphFileType )
+#------------------------------------------------------------------------------- 
+result2=summary(mcmcCoda)
+```
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bDiagbeta0.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bDiagbeta1.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bDiagnu.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bDiagsigma.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bDiagzbeta0.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bDiagzbeta1.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bDiagzsigma.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bPostPairs.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bPostPredYint.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bPostMarg.png){ width=60% }
+![](F:/2019 Spring Courses/DSA 5403 Bayesian/Lab14/lab14bPostPred.png){ width=60% }
+## Compare results!!  
+## Summarize what you have learnt!!
+(a)Results--NOT using a t distribution and NOT using ceneterd variables.
+```{r}
+result1
+```
+
+> The summary is as following:
+Iterations = 1001:34340
+Thinning interval = 1 
+Number of chains = 3 
+Sample size per chain = 33340 
+1. Empirical mean and standard deviation for each variable,
+   plus standard error of the mean:
+        Mean      SD  Naive SE Time-series SE
+beta0 36.565 18.4841 0.0584461       0.443738
+beta1  3.745  0.3001 0.0009491       0.007136
+sigma 21.291  2.5450 0.0080472       0.012996
+2. Quantiles for each variable:
+         2.5%    25%    50%    75%  97.5%
+beta0  0.4337 24.193 36.642 48.672 73.524
+beta1  3.1417  3.548  3.744  3.945  4.332
+sigma 17.0093 19.482 21.055 22.836 26.942
+3. The diagnoses plots are shown in the former part.
+
+
+(b)Results using a t distribution and NOT using ceneterd variables.
+```{r}
+result2
+```
+> Iterations = 1501:6500
+Thinning interval = 1 
+Number of chains = 4 
+Sample size per chain = 5000 
+1. Empirical mean and standard deviation for each variable,
+   plus standard error of the mean:
+           Mean       SD  Naive SE Time-series SE
+beta0  32.82519 18.14671 0.1283166      0.1382771
+beta1   3.79715  0.29222 0.0020663      0.0022021
+nu     33.35768 29.39987 0.2078885      0.4949795
+sigma  19.99991  2.79870 0.0197898      0.0274960
+zbeta0 -0.01216  0.06976 0.0004933      0.0005248
+zbeta1  0.91981  0.07079 0.0005005      0.0005334
+zsigma  0.41442  0.05799 0.0004101      0.0005697
+2. Quantiles for each variable:
+          2.5%     25%      50%      75%    97.5%
+beta0  -2.3945 20.6950 32.75657 44.88551  69.0373
+beta1   3.2168  3.6035  3.79933  3.99294   4.3657
+nu      3.8719 12.2529 24.26917 45.09469 113.5565
+sigma  14.9525 18.0956 19.83444 21.70786  25.9985
+zbeta0 -0.1478 -0.0587 -0.01253  0.03305   0.1270
+zbeta1  0.7792  0.8729  0.92034  0.96724   1.0575
+zsigma  0.3098  0.3750  0.41099  0.44981   0.5387
+The diagnoses plots are shown in the former part.
+
+Compared with two results: we know that the second robust method will give us more accurate results. We also can draw conclusion from the diagnoses plots and posterior plots.The second method will describe model more accurate so will give us more accurate prediction.
+
+Robust regression is a form of regression analysis designed to overcome some limitations of traditional parametric and non-parametric methods. Regression analysis seeks to find the relationship between one or more independent variables and a dependent variable.
+For this problem, our MCMCmodel transformed the raw data to make a new model to do the prediction. This method is better than the GLM.
+
+Simple linear regression is a statistical method that allows us to summarize and study relationships between two continuous (quantitative) variables:One variable, denoted x, is regarded as the predictor, explanatory, or independent variable.The other variable, denoted y, is regarded as the response, outcome, or dependent variable.
+
+There are some limitations for GLM: 
+1.Linear regressions are sensitive to outliers. for this problem, we had the outlier--green point. So the result from GLM is not that accurate.
+2.Overfitting - It is easy to overfit the model such that the regression begins to model the random error (noise) in the data, rather than just the relationship between the variables.
+3.If there is a nonlinear relationship, then GLM have a bad model.
+
+

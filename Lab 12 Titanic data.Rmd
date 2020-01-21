@@ -1,0 +1,241 @@
+---
+title: 'Lab 12: Titanic data'
+author: "Jishan Luo"
+date: "`r Sys.time()`"
+output:
+  word_document:
+    toc: yes
+  pdf_document: default
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# The course
+
+As you have noticed "the Titanic" has been a theme of the course. The course has been structured into three parts:
+
+    * Distributional results and basics of R
+    * Binomial: a simple model where Bayesian methodology is learnt
+    * The GLM: A more advanced application of Bayesian theory
+
+All the skills that you have learnt in parts 1 and 2 will now be applied to a logistic regression which is a special case of the GLM.
+
+We will now start to analyze the Titanic data set and you will perfect this in Assignment 4.
+
+# Task 0: The story
+
+## Summarize the Titanic story by reading the following web page: (https://www.history.com/this-day-in-history/unsinkable-titanic-sinks)
+
+> RMS Titanic was a British passenger liner that sank in the North Atlantic Ocean in 1912, after colliding with an iceberg during her maiden voyage from Southampton to New York City. Of the estimated 2,206 passengers, including 898 crew aboard, about 1,517 died, making it one of modern history's deadliest commercial marine disasters during peacetime. There are some blame for the captain and bridge crew, however, the sink was not caused by them, it was because of the following: not enough life boats; late warning from radio; the design of the ship cannot withstand for more than 4 compartments flooding. In 1985, people finally found wreckage of the Titanic on the floow of the North Atlantic.
+
+# Task 1: The Titanic data set
+We will use the data set as prepared in the `vcdExtra` package. We will aslo use the `gpairs` package.
+Please install.
+
+##  Make a pairs plot of the data using `gpairs()`
+```{r data, message = FALSE, warning=FALSE}
+library(vcdExtra)
+library(gpairs)
+data("Titanicp")
+head(Titanicp)
+gpairs(Titanicp)
+```
+
+Notice that there are a number of categorical variables and a continuous variable `age`.
+
+## Using the R help for the package describe the variables in the Titanicp data set.
+
+> This dataset has 1309 observations and 6 variables. "pclass" is a fator with levels--1,2,3; "survived" is a factor with levels--died and survived; "sex" is a factor--female and male; "age" is a numeric variable in years; "sibsp" is an integer variable ranges from 0 to 8; "parch" is an integer varibale ranges from 0 to 6. 
+
+
+# Task 2: Interpreting the plots
+
+## Interpret the plots below:
+
+```{r ggplots}
+library(ggplot2)
+g = ggplot(Titanicp, aes(x = age, y=as.numeric(survived =="survived"),color = sex)) + ylab("Survived") + theme_bw() 
+
+g = g + geom_point(position = position_jitter(height = 0.015, width =0))
+g
+#
+
+g = g + stat_smooth(method = "glm", method.args = list(family=binomial("logit")), formula = y ~ x + I(x^2) + I(x^3), alpha = 0.25, size = 2.5, aes(fill = sex))
+g
+
+g = g + facet_wrap(~pclass)
+g
+
+
+```
+> 1. The first plot shows: survived and unsurvived distribution according to gender and ages; more males died while more females survived;  
+
+> 2. For females, as age increases, the probability they could survive goes up; while for males, as age increases, the probability they could survive goes down.
+
+> 3. We added class group to the plot.For different classes, the rate of survive probability changes: 
+for the 1st class, from age 0-20, the survive probability of females increases sharply, then the probability became flat even a little drop when age came from 50-80. Probability for males is keeping dropping down as age increases; 
+for the 2nd and 3rd class, the survive probability of females decreases and increases happened, while for the males survive porbability decreases and becomes flat.
+
+
+# Task 3: Classical analysis using `glm()`
+
+We will perform a logistic regression using glm.
+
+```{r classicalglm, eval=TRUE}
+clglm = glm(survived ~ sex + age + sex:age,family = "binomial", data = Titanicp)
+summary(clglm)
+```
+
+## What are the classical point estimates?
+> The point estimates for `sexmale` is `-1.154139`;The point estimates for `age` is `0.022516`; The point estimates for `sexmale:age` is `-0.046276`; The point estimates for intercept is `0.493381`;
+
+
+# Task 4: Use the classical model to make data for Jags
+
+## Complete the code below (one line, `y=`)
+
+## Why not just use the original data?
+> Because that the orginal data has some `N.A` values which will have impact on result. We here applied method to get rid of missing values, so that we will have more accurate estimation.
+
+```{r datamodel, eval=FALSE}
+mat1=model.matrix(clglm)
+mat2=model.frame(clglm)
+head(mat1)
+head(mat2)
+
+y = with(mat2, ifelse(survived == "survived", 1,0))
+
+# n = length(y)
+# 
+# idx = sample(1:n, 200)
+# mat2= mat2[idx,]
+# mat1 = mat1[idx,]
+# y=y[idx]
+dataList=list(y = y, x = mat1[, "age"],sexm = mat1[,"sexmale"], sexmx = mat1[,"sexmale:age"] , n = length(y))
+#dataList
+length(mat1[,"sexmale:age"])
+```
+
+
+
+# Task 5: Now we will use the classical estimates as initial values in a jags script
+
+```{r}
+mat1=model.matrix(clglm)
+mat2=model.frame(clglm)
+head(mat1)
+head(mat2)
+
+y = with(mat2, ifelse(survived == "survived", 1,0))
+
+# n = length(y)
+# 
+# idx = sample(1:n, 200)
+# mat2= mat2[idx,]
+# mat1 = mat1[idx,]
+# y=y[idx]
+dataList=list(y = y, x = mat1[, "age"],sexm = mat1[,"sexmale"], sexmx = mat1[,"sexmale:age"] , n = length(y))
+#dataList
+length(mat1[,"sexmale:age"])
+
+library(rjags)
+
+#Define the model:
+modelString = "
+model{
+ 
+for(i in 1:n)
+{
+y[i] ~ dbin(theta[i],1)
+logit(theta[i]) <- beta[1] + beta[2]*x[i]+ beta[3]*sexm[i]+beta[4]*sexmx[i]
+}
+
+for (j in 1:4) {
+beta[j] ~ dnorm(0,1.0E-6) #low impact prior
+}
+
+}
+" # close quote for modelString
+writeLines( modelString , con="TEMPmodel.txt" )
+
+
+#  initsList = list( theta=thetaInit )
+
+initsList = list(beta=c(0.5,0.02,-1.15,-0.05))
+# Run the chains:
+jagsModel = jags.model( file="TEMPmodel.txt" , data=dataList , inits=initsList , 
+                        n.chains=3 , n.adapt=500 )
+list.samplers(jagsModel)
+
+update( jagsModel , n.iter=500 )
+codaSamples = coda.samples( jagsModel , variable.names=c("beta"),
+                            n.iter=33340 )
+save( codaSamples , file=paste0("lab12","Mcmc.Rdata") )
+
+summary(codaSamples)
+
+library(ggmcmc)
+s = ggs(codaSamples)
+d=ggs_density(s)
+print(d)
+
+cr=ggs_crosscorrelation(s)
+print(cr)
+```
+
+
+# Task 6: Interpretation
+
+## Interpret all the Bayesian output 
+```{r}
+summary(codaSamples)
+```
+
+    * Interpret the point estimates for the betas
+
+> Point estimates:
+The mean value of `beta[1]` is   0.48931;
+The mean value of `beta[2]` is   0.02289;
+The mean value of `beta[3]` is  -1.14999;
+The mean value of `beta[4]` is  -0.04685.
+
+    * Interpret the interval estimates for the betas
+
+> Interval estimates:
+Given a 95% Baysian credible interval for `beta[1]`, we got the interval value is 
+(-0.013978,0.98971). We are 95% confidet that the true value of `beta[1]` is contained in that interval;
+Given a 95% Baysian credible interval for `beta[2]`, we got the interval value is (0.006329,0.04000). We are 95% confidet that the true value of `beta[2]` is contained in that interval;
+Given a 95% Baysian credible interval for `beta[3]`, we got the interval value is (-1.826672,-0.49235). We are 95% confidet that the true value of `beta[3]` is contained in that interval;
+Given a 95% Baysian credible interval for `beta[4]`, we got the interval value is (-0.068935,-0.02467). We are 95% confidet that the true value of `beta[4]` is contained in that interval.
+
+    * How do you know the MCMC  sampler converged to stationarity?
+
+> When the sampler converged to stationarity, we can see from plot, the estimates for `betas` will converge, the three chains will almost cover each other. Also from the diagnose plots, we can see that the sample converged to stationarity.  
+
+    * Compare your results with the classical analysis estimates
+```{r class}
+# Class and survivability
+tab =with(Titanicp,table(survived,pclass))
+pr = prop.table(tab,margin = 2)
+barplot(100*pr, legend = TRUE,beside = TRUE)
+```
+The classical estimates:
+The point estimates for `sexmale` is `-1.154139`;
+The point estimates for `age` is `0.022516`; 
+The point estimates for `sexmale:age` is `-0.046276`; 
+The point estimates for intercept is `0.493381`;
+
+The mcmc estimates:
+The point estimates of `beta[1]` is   0.48931; (corresponded to intercept--0.493381)
+The point estimates of `beta[2]` is   0.02289; (corresponded to age--0.022516)
+The point estimates of `beta[3]` is  -1.14999; (corresponded to sexmale--1.154139)
+The point estimates of `beta[4]` is  -0.04685. (corresponded to sexmale:age--0.046276)
+
+We can see that they are almost the same.
+
+
+

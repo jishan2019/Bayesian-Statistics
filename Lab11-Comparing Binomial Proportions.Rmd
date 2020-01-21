@@ -1,0 +1,273 @@
+---
+title: 'Lab 11: Comparing Binomial Proportions'
+author: "Jishan Luo"
+date: "April 1, 2019"
+output:
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# A good reference book
+The following problem is taken from page 105 `Bayesian Ideas and Data Analysis: An Introduction for Scientists and Statisticians` 
+
+
+
+# The story
+
+534 medflies that lived at least 34 days. These are cross classified by two factors:
+
+    A) whether the fly produced at least 1,000 eggs in the first 30 days of life and
+    B) whether the fly lived ata least 44 days
+    
+```{r}
+mat = matrix(c(54,80,224,176), nr = 2,nc=2, byrow = TRUE)
+colnames(mat)= c("Long-lived","short-lived")
+rownames(mat)= c("High", "Low")
+mat
+```
+These are multinomial data but if we view the Longetivity given reproductive factor we shall see these as two independent binomials
+
+$$y_1|\theta \sim Bin(n_1,\theta_1) \perp y_2|\theta_2 \sim Bin(n_2, \theta_2)$$
+    
+The data can then be obtained from the above table:
+
+> 
+    $n_1=134,n_2=400, y_1=54, y_2 = 224$
+    
+    
+    
+# Task 1
+
+Find the conjugate solution -- that is find the *analytical* posteriors for $\theta_1|y_1$ and $\theta_2|y_2$ using $\theta_i\sim Beta(a_i,b_i)$ where $i\in \{1,2\}$
+
+$$p(\theta_1|y_1)=Beta(a_1+y_1,b_1+n_1-y_1)$$
+$$p(\theta_2|y_2)=Beta(a_2+y_2,b_2+n_2-y_2)$$
+
+
+# Task 2
+Make plots of the two posteriors in R using
+
+* $a_i = 1, b_i =1$
+* $a_i = 4, b_i =1$
+* $a_i = 1, b_i =4$
+* $a_i = 3, b_i =3$
+
+```{r }
+#layout(matrix(1:8,nc=2,nr=4))
+a=c(1,4,1,3)
+b=c(1,1,4,3)
+n=c(134,400)
+y=c(54,224)
+for (i in 1:2)
+{
+  for(j in 1:4)
+  {
+    curve(dbeta(x,a[j]+y[i],b[j]+n[i]-y[i]),xlim=c(0,1),lwd=2,col=c("Red","Green")[i],ylab="density",main="Jishan")
+    text(0.3,6,paste("a=",a[j],"b=",b[j]))
+  }
+}
+```
+
+
+
+# Task 3
+
+Create a jags model for the above problem by correcting and/or completing the given code. Note that there are some useful logical nodes made. Comment on them.
+
+```{r model, eval=FALSE}
+model{
+  for(i in 1:2){
+  y[i] ~ dbin(theta[i], n[i])
+
+  theta[i] ~ dbeta(1,1)
+  odds[i] <- theta[i]/(1-theta[i]) 
+  }
+  
+  RD <- theta[2]-theta[1] # Risk difference
+  RR <-theta[2]/theta[1] #Relative risk
+  test<- step(RD) # What does this test? It helps us to find the mean of the test. The mean of the test is the probability of RD is positive. 
+}
+```
+
+
+
+# Task 4
+
+Now make the complete jags code. Please include some logical constant assignments so that you can assign new priors easily
+
+Example:
+
+```{r logicalnodes, eval=FALSE}
+a[i]<-1
+b[i]<-1
+```
+
+
+Make sure you monitor `theta`, `RR`, `OR` and `test`.
+```{r jagscript}
+library(rjags)
+
+a=1 #prior 
+b=1
+
+dataList=list(n=n,y=y,a=a,b=b) #this can change the hyper-parameters
+
+#Define the model:
+modelString = "
+model{
+for(i in 1:2){
+  y[i] ~ dbin(theta[i], n[i])
+
+  theta[i] ~ dbeta(a,b) #prior
+  odds[i] <- theta[i]/(1-theta[i]) 
+  }
+  
+  RD <- theta[2]-theta[1] # Risk difference
+  RR <-theta[2]/theta[1] #Relative risk
+  test<- step(RD)
+
+}
+
+" # close quote for modelString
+writeLines( modelString , con="TEMPmodel.txt" )
+
+#  initsList = list( theta=thetaInit )
+
+initsList = list(theta=c(0.4,0.5))
+# Run the chains:
+jagsModel = jags.model( file="TEMPmodel.txt" , data=dataList , inits=initsList , 
+                        n.chains=3 , n.adapt=500 )
+list.samplers(jagsModel)
+
+update( jagsModel , n.iter=500 )
+codaSamples = coda.samples( jagsModel , variable.names=c("theta", "RR","RD","test"),n.iter=33340 )
+save( codaSamples , file=paste0("lab11","Mcmc.Rdata") )
+
+summary(codaSamples)
+
+library(ggmcmc)
+s = ggs(codaSamples)
+d = ggs_density(s)
+
+print(d)
+
+cr = ggs_crosscorrelation(s)
+print(cr)
+```
+
+
+
+# Task 5
+
+Please give point and interval estimates for the above nodes. Interpret them.
+```{r}
+summary(codaSamples)
+```
+>Point estimates:
+
+The mean value of `RD` is   0.1553;
+
+The mean value of `RR` is   1.3990;
+
+The mean value of `test` is    0.9993;
+
+The mean value of `theta[1]`  is   0.4044;
+
+The mean value of `theta[2]` is   0.5597.
+
+
+
+>Interval estimates:
+
+Given a 95% Baysian credible interval for `RD`, we got the interval value is ( 0.05968,0.2489). We are 95% confidet that the true value of `RD` is contained in that interval;
+
+Given a 95% Baysian credible interval for `RR`, we got the interval value is (1.12559,1.7506). We are 95% confidet that the true value of `RR` is contained in that interval;
+
+Given a 95% Baysian credible interval for `test`, we got the interval value is (1.00000,1.0000). We are 95% confidet that the true value of `test` is contained in that interval;
+
+Given a 95% Baysian credible interval for `theta[1]`, we got the interval value is (0.32428,0.4871). We are 95% confidet that the true value of `theta[1]` is contained in that interval;
+
+Given a 95% Baysian credible interval for `theta[2]`, we got the interval value is (0.51071,0.6075). We are 95% confidet that the true value of `theta[2]` is contained in that interval.
+
+
+# Task 6
+
+Make a function `mybibin()` that will solve the same type of problem where the data inputs will be a vector of y's and a vector of n's. The priors will be beta's and will therefore need a vector of a's and b's. 
+The command line output should be a list of point and interval estimates for a given $\alpha$.
+The function should produce analytical posterior, prior and likelihood plots and MCMC posterior plots of the theta's and all other stochastic nodes.
+Run your function with the same data as given and $a = c(1,2), b= c(1,2)\; and\; \alpha = 0.2$
+
+How will you change the model code? 
+There are many ways to do this -- one way is to break the model "text" into parts and rejoin them after changing values. You can use `paste()`
+
+```{r}
+mybibin=function(y=c(54,224),n=c(134,400),alpha=0.05,a=c(1,2),b=c(1,2)){
+  
+library(rjags)
+library(ggmcmc)
+dataList=list(n=n,y=y,a=a,b=b) #this can change the hyper-parameters
+
+#Define the model:
+modelString = "
+model{
+for(i in 1:2){
+  y[i] ~ dbin(theta[i], n[i])
+
+  theta[i] ~ dbeta(a[i],b[i]) #prior
+  odds[i] <- theta[i]/(1-theta[i]) 
+  }
+  
+  RD <- theta[2]-theta[1] # Risk difference
+  RR <-theta[2]/theta[1] #Relative risk
+  test<- step(RD)
+
+}
+
+" # close quote for modelString
+writeLines( modelString , con="TEMPmodel.txt" )
+
+#  initsList = list( theta=thetaInit )
+
+initsList = list(theta=c(0.4,0.5))
+# Run the chains:
+jagsModel = jags.model( file="TEMPmodel.txt" , data=dataList , inits=initsList , 
+                        n.chains=3 , n.adapt=500 )
+list.samplers(jagsModel)
+
+update( jagsModel , n.iter=500 )
+codaSamples = coda.samples( jagsModel , variable.names=c("theta", "RR","RD","test"),n.iter=33340 )
+save( codaSamples , file=paste0("lab11","Mcmc.Rdata") )
+
+summary(codaSamples)
+
+library(ggmcmc)
+s = ggs(codaSamples)
+d = ggs_density(s)
+
+print(d)
+
+cr = ggs_crosscorrelation(s)
+print(cr)
+
+t=ggs_traceplot(s)
+print(t)
+
+list(summary=summary(codaSamples,c(alpha/2,1-alpha/2)),data=dataList,density=d)
+
+}
+
+
+mcout2=mybibin(alpha=0.20,a=c(1,2),b=c(1,2))
+mcout2$summary
+mcout2$density
+mcout2$data
+```
+
